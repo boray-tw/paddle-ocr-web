@@ -1,0 +1,11 @@
+services:
+  backend:
+    image: local/paddle-ocr-backend
+    build:
+      context: src/backend
+    runtime: nvidia # remove this for CPU-only servers
+    container_name: paddle-ocr-backend
+    restart: unless-stopped
+    shm_size: 8g
+    ports:
+      - 0.0.0.0:8010:8010 # TODO: reverse proxy this backend

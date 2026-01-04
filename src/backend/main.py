@@ -59,44 +59,34 @@ class OcrDataFrame:
     markdown_text: str = ""
 
 
-def batch_process_ocr(
-    input_dataframes: list[OcrDataFrame], to_cleanup=True
-) -> list[OcrDataFrame]:
-    """Running OCR on multiple files and return updated results."""
-
-    ocr_engine = PaddleOCR(
+def launch_ocr_engine() -> PaddleOCR:
+    return PaddleOCR(
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
+        return_word_box=False,
     )
-    
-    output_dataframes: list[OcrDataFrame] = []
+
+
+def process_ocr(local_path: Path | str) -> str:
+    """Running OCR on multiple files and return updated results."""
+
     try:
-        all_results: list[dict] = ocr_engine.predict(
-            [str(df.local_path) for df in input_dataframes]
-        )
-        for result in all_results:
-            df = next(
-                (df for df in input_dataframes if str(df.local_path) == result["input_path"]),
-                None,
-            )
-
-            if df is None:
-                warnings.warn(f"Possibly corrupted OCR result: {result}")
-                continue
-
-            df.markdown_text = "\n".join(result["rec_texts"])
-            output_dataframes.append(df)
-
+        results: list[dict] = launch_ocr_engine().predict(str(local_path))
     except Exception as e:
-        warnings.warn(f"Failed OCR with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if to_cleanup:
-            for df in input_dataframes:
-                df.local_path.unlink(missing_ok=True)
+        warnings.warn(f'Failed OCR with file "{local_path}" and error:\n{e}')
+        # TODO: resize the image to 2000x2000 or below,
+        # and retry OCR in the backend automatically
+        return "(Failed. Please reduce the image size.)"
 
-    return output_dataframes
+    if len(results) == 0:
+        warnings.warn(f"Empty result for input image: {local_path}")
+        return ""
+
+    if len(results) > 1:
+        warnings.warn(f"Possibly corrupted OCR results:\n{results}")
+
+    return "\n".join(results[0]["rec_texts"])
 
 
 # --- Endpoints ---
@@ -139,32 +129,30 @@ async def run_ocr(
         raise HTTPException(status_code=401, detail="Failed authentication.")
 
     # store files
-    ocr_dataframes: list[OcrDataFrame] = []
+    file_mappings: list[tuple[str, Path]] = []
     for file in files:
-        assert file.filename is not None
+        assert file.filename is not None, f"Invalid file: {file}"
 
-        local_path = UPLOAD_DIR / f"{secrets.token_hex(8)}_{file.filename}"
-
+        local_path: Path = UPLOAD_DIR / f"{secrets.token_hex(8)}_{file.filename}"
         with open(local_path, "wb") as f:
             content = await file.read()
             f.write(content)
 
-        ocr_dataframes.append(
-            OcrDataFrame(input_filename=file.filename, local_path=local_path)
-        )
+        file_mappings.append((file.filename, local_path))
 
-    # trigger OCR
-    ocr_dataframes = batch_process_ocr(ocr_dataframes)
+    # trigger OCR individually to avoid no result from only
+    # a single failed file
+    # TODO: return the progress: https://stackoverflow.com/a/64910966/27092911
+    ocr_results: list[tuple[str, str]] = [
+        (remote_path, process_ocr(local_path))
+        for (remote_path, local_path) in file_mappings
+    ]
 
-    return {
-        "results": [
-            dict(
-                input_filename=df.input_filename,
-                markdown_text=df.markdown_text,
-            )
-            for df in ocr_dataframes
-        ]
-    }
+    # clean up
+    for _, local_path in file_mappings:
+        local_path.unlink(missing_ok=True)
+
+    return {"results": ocr_results}
 
 
 # host the app

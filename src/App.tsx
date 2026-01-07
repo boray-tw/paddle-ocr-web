@@ -19,12 +19,16 @@ export default function PaddleOCRFrontend() {
   const [tooLargeFiles, setTooLargeFiles] = useState<string[]>([]);
   const [invalidTypedFiles, setInvalidTypedFiles] = useState<string[]>([]);
   const axiosInstance = axios.create({ baseURL: import.meta.env.VITE_BACKEND_URI })
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [taskUID, setTaskUID] = useState(null);
+  const [progress, setProgress] = useState(0.0);
+  const [markdownText, setMarkdownText] = useState("");
 
   // fetch token from backend
   useEffect(() => {
     const fetchToken = async () => {
       try {
-        const res = await axiosInstance.get('/get-token'); // Update to your actual endpoint
+        const res = await axiosInstance.get('/get-token');
         setToken(res.data.token);
       } catch (err) {
         console.error("Failed to fetch session token", err);
@@ -87,20 +91,58 @@ export default function PaddleOCRFrontend() {
     files.forEach(file => formData.append('files', file));
 
     try {
-      const response = await axiosInstance.post('/ocr', formData, {
+      const res = await axiosInstance.post('/ocr', formData, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'
         }
       });
-      console.log("OCR Result:", response.data);
-      alert("Finished! Please check the console for results.");
+      setIsProcessing(true);
+      setTaskUID(res.data.task_uid);
+      console.log("Started processing.");
     } catch (err) {
-      alert("Upload failed or server failed processing. Please reduce the number of images.");
+      alert("Upload failed or server failed processing. Please reduce the resolution of images.");
+      setIsProcessing(false);
     } finally {
       setIsUploading(false);
     }
   };
+
+  // pull the processing status once every second
+  // ref: https://stackoverflow.com/a/63143722/27092911
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isProcessing && taskUID) {
+        const fetchResults = async () => {
+          try {
+            const res = await axiosInstance.get('/get-results/' + taskUID);
+            const results: Record<string, string> = res.data.results;
+            setMarkdownText(Object.entries(results).map(([filename, text]) => `// --- ${filename} ---\n${text}`).join("\n\n"));
+          }
+          catch (err) {
+            console.error("Failed to fetch the results", err);
+          }
+        }
+
+        const fetchStatus = async () => {
+          try {
+            const res = await axiosInstance.get('/get-status/' + taskUID);
+            setProgress(res.data.progress);
+            if (res.data.status == "completed") {
+              fetchResults();
+              setIsProcessing(false);
+              setTaskUID(null);
+            }
+          } catch (err) {
+            console.error("Failed to fetch processing status", err);
+          }
+        };
+
+        fetchStatus();
+      }
+    }, 1e3);
+    return () => clearInterval(interval);
+  }, [isProcessing, taskUID, progress])
 
   // cleanup object URLs to prevent memory leaks
   useEffect(() => {
@@ -125,6 +167,14 @@ export default function PaddleOCRFrontend() {
           <Upload className="mx-auto h-12 w-12 text-gray-50 mb-4" />
           <p className="text-lg text-gray-50">Drag & drop images here, or click to select</p>
         </div>
+
+        <progress value={progress} max="1.0">{progress}%</progress>
+        {markdownText.length > 0 && (
+          <div>
+            <h2>Results:</h2>
+            <p>{markdownText}</p>
+          </div>
+        )}
 
         {/* Too large and/or invalid typed files */}
         {tooLargeFiles.length > 0 && (

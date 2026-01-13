@@ -22,7 +22,7 @@ export default function PaddleOCRFrontend() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [taskUID, setTaskUID] = useState(null);
   const [progress, setProgress] = useState(0.0);
-  const [markdownText, setMarkdownText] = useState("");
+  const [results, setResults] = useState<Record<string, string>>({});
 
   // fetch token from backend
   useEffect(() => {
@@ -116,8 +116,7 @@ export default function PaddleOCRFrontend() {
         const fetchResults = async () => {
           try {
             const res = await axiosInstance.get('/get-results/' + taskUID);
-            const results: Record<string, string> = res.data.results;
-            setMarkdownText(Object.entries(results).map(([filename, text]) => `// --- ${filename} ---\n${text}`).join("\n\n"));
+            setResults(res.data.results);
           }
           catch (err) {
             console.error("Failed to fetch the results", err);
@@ -169,10 +168,17 @@ export default function PaddleOCRFrontend() {
         </div>
 
         <progress value={progress} max="1.0">{progress}%</progress>
-        {markdownText.length > 0 && (
-          <div>
+        {Object.entries(results).length > 0 && (
+          <div style={{whiteSpace: "pre-wrap"}}>
             <h2>Results:</h2>
-            <p>{markdownText}</p>
+            <ul>
+            {Object.entries(results).map(([_, [filename, text]]) =>
+              <li key={filename} className="text-gray-50" style={{marginBottom: "1em"}}>
+                <b key={filename}>{filename}:</b><br/>
+                {text}
+              </li>
+            )}
+            </ul>
           </div>
         )}
 

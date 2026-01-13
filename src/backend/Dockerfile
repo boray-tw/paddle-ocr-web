@@ -1,5 +1,7 @@
 FROM paddlepaddle/paddle:3.2.2-gpu-cuda12.9-cudnn9.9
 
+ARG UID=2000
+
 # install dependencies
 RUN pip install \
   --no-cache-dir \
@@ -19,7 +21,7 @@ WORKDIR /app
 COPY main.py ./
 
 # run the app as a normal user
-RUN useradd -m paddle
+RUN useradd -u ${UID} -m paddle
 USER paddle
 
 # suppress PaddleOCR warnings when writing to $HOME (/root by default)

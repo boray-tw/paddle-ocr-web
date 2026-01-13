@@ -1,11 +1,33 @@
 services:
+  # ref: https://github.com/sartography/spiff-arena/pull/2099/files
+  volume-init:
+    image: alpine
+    container_name: paddle-ocr-volume-init
+    restart: "no"
+    # use UID if set, otherwise default to root (0:0)
+    entrypoint: |
+      /bin/sh -c "chown $${UID:-0:0} /tmp/model-cache"
+    volumes:
+      - model-cache:/tmp/model-cache
+    environment:
+      UID: 2000
   backend:
     image: local/paddle-ocr-backend
     build:
       context: src/backend
+      args:
+        UID: 2000
     runtime: nvidia # remove this for CPU-only servers
     container_name: paddle-ocr-backend
     restart: unless-stopped
+    depends_on:
+        volume-init:
+          condition: service_completed_successfully
     shm_size: 8g
+    volumes:
+      - model-cache:/home/paddle/.paddlex
     ports:
       - 0.0.0.0:8010:8010 # TODO: reverse proxy this backend
+
+volumes:
+  model-cache:
